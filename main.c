@@ -101,11 +101,11 @@ void dilatacaoMDV(unsigned char **matrizLimpa, unsigned char **matrizMapeada, un
 
     for(unsigned int i = 0; i < altura; i++) {
         for(unsigned int j = 2; j < largura - 3; j++) {
-            bool um = true;
+            bool um = false;
 
             for(int x = -val; x < (mX - 1 - val); x++){
                 if(matrizLimpa[i][j+x] == 0){
-                    um = false;
+                    um = true;
                     break;
                 }
             }
@@ -228,7 +228,7 @@ void destacandoPalavras(unsigned char **matrizLimpa, Geral *listaPalavras){
 
 void imprimirImagem(unsigned char **matrizLimpa, FILE* arqsaida, unsigned int altura, unsigned int largura) {
     fprintf(arqsaida, "P1\n");
-    fprintf(arqsaida, "%u %u\n", altura, largura);
+    fprintf(arqsaida, "%u %u\n", largura, altura);
 
     for(unsigned int i = 0; i < altura; i++) {
         for(unsigned int j = 0; j < largura; j++) {
@@ -239,6 +239,10 @@ void imprimirImagem(unsigned char **matrizLimpa, FILE* arqsaida, unsigned int al
 }
 
 int main(int argc, char* argv[]) {
+    if(argc < 3) {
+        fprintf(stderr, "Uso: %s <entrada> <saida>\n", argv[0]);
+        return 1;
+    }
     
     //leitura do arquivo fonte passado via terminal e do arquivo que vai colocar a saída
     FILE* arqfonte = fopen(argv[1], "r");
@@ -249,6 +253,7 @@ int main(int argc, char* argv[]) {
     }
     if (!arqsaida) {
         fprintf(stderr, "Erro ao abrir arquivo de saida.\n");
+        fclose(arqfonte);
         return 1;
     }
 
@@ -269,9 +274,9 @@ int main(int argc, char* argv[]) {
     
     for (unsigned int i = 0; i < altura; i++) {
         matriz[i] = (unsigned char *)malloc(largura * sizeof(unsigned char));
-        matrizErosao[i] = (unsigned char *)malloc(largura * sizeof(unsigned char));
-        matrizLimpa[i] = (unsigned char *)malloc(largura * sizeof(unsigned char));
-        matrizMapeada[i] = (unsigned char *)malloc(largura * sizeof(unsigned char));
+        matrizErosao[i] = (unsigned char *)malloc(largura * sizeof(unsigned char*));
+        matrizLimpa[i] = (unsigned char *)malloc(largura * sizeof(unsigned char*));
+        matrizMapeada[i] = (unsigned char *)malloc(largura * sizeof(unsigned char*));
         matrizContagem[i] = (unsigned char *)malloc(largura * sizeof(unsigned char*));
     }
 
@@ -291,8 +296,17 @@ int main(int argc, char* argv[]) {
     erosao(matriz, matrizErosao, altura, largura);
     dilatacao(matrizErosao, matrizLimpa, altura, largura, 3, 3);
 
+    int tamMascara = (int)(largura * 0.005);
+    //garante que o valor da mascara não seja menor que 5 - já que a altura minima é 12
+    if(tamMascara < 5) {
+        tamMascara = 5;
+    }
+    //garante que a mascara seja impar
+    if(tamMascara % 2 == 0) {
+        tamMascara++;
+    }
     //mapeamento das palavras - transformamos as palavras em blocos sólidos
-    dilatacaoMD(matrizLimpa, matrizMapeada, altura, largura);
+    dilatacaoMDH(matrizLimpa, matrizMapeada, altura, largura, tamMascara);
 
     //estrutura para armazenar as informações do número de palavras
     Geral *listaPalavras = malloc(sizeof(Geral));
@@ -328,9 +342,26 @@ int main(int argc, char* argv[]) {
     dilatacaoMDV(matrizLimpa, matrizContagem, altura, largura, tamanhoC);
     algoritmoRetangulos(matrizContagem, altura, largura, ContagemColunas);
 
+    printf("\n\nTotal de palavras encontradas: %d", listaPalavras->quant);
+    printf("\nTotal de linhas encontradas: %d", ContagemLinhas->quant);
+    printf("\nTotal de colunas encontradas: %d", ContagemColunas->quant);
+    printf("\n\n");
+
     destacandoPalavras(matrizLimpa, listaPalavras);
     imprimirImagem(matrizLimpa, arqsaida, altura, largura);
 
+    for(unsigned int i = 0; i < altura; i++) {
+        free(matriz[i]);
+        free(matrizErosao[i]);
+        free(matrizLimpa[i]);
+        free(matrizMapeada[i]);
+        free(matrizContagem[i]);
+    }
+    free(matriz);
+    free(matrizErosao);
+    free(matrizLimpa);
+    free(matrizMapeada);
+    free(matrizContagem);
     free(listaPalavras->palavras);
     free(ContagemColunas->palavras);
     free(ContagemLinhas->palavras);
