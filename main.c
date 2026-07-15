@@ -47,7 +47,7 @@ void dilatacao(unsigned char **matriz2, unsigned char **matrizLimpa, unsigned in
 
             bool tudo = false;
 
-            for(int x = val; x <= 0; x--) {
+            for(int x = val; x >= 0; x--) {
                 if(x == 0 && matriz2[i][j] == 1) {
                     tudo = true;
                 }
@@ -73,7 +73,7 @@ void dilatacaoMDH(unsigned char **matrizLimpa, unsigned char **matrizMapeada, un
         for(unsigned int j = val; j < largura - val; j++) {
             bool um = false;
 
-            for(int x = -val; x < (mY - 1 - val); x++){
+            for(int x = -val; x <= val; x++){
                 if(matrizLimpa[i][j+x] == 1){
                     um = true;
                     break;
@@ -98,7 +98,7 @@ void dilatacaoMDV(unsigned char **matrizLimpa, unsigned char **matrizMapeada, un
         for(unsigned int i = val; i < altura - val; i++) {
             bool um = false;
 
-            for(int x = -val; x < (mX - 1 - val); x++){
+            for(int x = -val; x <= val; x++){
                 if(matrizLimpa[i+x][j] == 1){
                     um = true;
                     break;
@@ -414,12 +414,14 @@ int main(int argc, char* argv[]) {
         free(matriz[i]);
         free(matrizErosao[i]);
         free(matrizLimpa[i]);
+        free(matrizLimpa2[i]);
         free(matrizMapeada[i]);
         free(matrizContagem[i]);
     }
     free(matriz);
     free(matrizErosao);
     free(matrizLimpa);
+    free(matrizLimpa2);
     free(matrizMapeada);
     free(matrizContagem);
     free(listaPalavras->palavras);
