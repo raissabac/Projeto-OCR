@@ -1,436 +1,806 @@
-#include <stdio.h>
-#include <stdint.h>
-#include <string.h>
+#include <ctype.h>
+#include <errno.h>
+#include <inttypes.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
-//registrar as coordenadas das imagens 
 typedef struct {
-    unsigned int minX;
-    unsigned int maxX;
-    unsigned int minY;
-    unsigned int maxY;
+    size_t largura;
+    size_t altura;
+    unsigned char *pixels;
+} Imagem;
+
+typedef struct {
+    size_t inicio;
+    size_t fim;
+} Faixa;
+
+typedef struct {
+    Faixa *itens;
+    size_t quantidade;
+} ListaFaixas;
+
+typedef struct {
+    size_t topo;
+    size_t base;
+    size_t esquerda;
+    size_t direita;
 } Retangulo;
 
 typedef struct {
-    Retangulo *palavras;
-    unsigned int quant;
-    unsigned int capacidade;
-} Geral;
+    Retangulo *itens;
+    size_t quantidade;
+    size_t capacidade;
+} ListaRetangulos;
 
+typedef struct {
+    size_t colunas;
+    size_t linhas;
+    ListaRetangulos palavras;
+} Resultado;
 
-void erosao(unsigned char **matriz, unsigned char **matrizErosao, unsigned int altura, unsigned int largura){
-    for (unsigned int i = 1; i < altura-1; i++) {
-        for(unsigned int j = 1; j < largura-1; j++){
-
-            bool tudo = true;
-
-            if(matriz[i-1][j] == 0 || matriz[i+1][j] == 0 || matriz[i][j-1] == 0 || matriz[i][j] == 0 || matriz[i][j+1] == 0){
-                tudo = false;
-            }
-
-            if(tudo == true) {
-                matrizErosao[i][j] = 1;
-            } else {
-                matrizErosao[i][j] = 0;
-            }
-        }
-    }
+static size_t indice_pixel(const Imagem *imagem, size_t linha, size_t coluna) {
+    return linha * imagem->largura + coluna;
 }
 
-//fazer a dilatacao, adição dos campos int mX e int mY para poder utilizar a função com qualquer mascara
-void dilatacao(unsigned char **matriz2, unsigned char **matrizLimpa, unsigned int altura, unsigned int largura, int m) {
-    int val = m/2;
-
-    for (unsigned int i = 1; i < altura-1; i++) {
-        for(unsigned int j = 1; j < largura-1; j++){
-
-            bool tudo = false;
-
-            for(int x = val; x >= 0; x--) {
-                if(x == 0 && matriz2[i][j] == 1) {
-                    tudo = true;
-                }
-                else if(matriz2[i-x][j] == 1 || matriz2[i+x][j] == 1 || matriz2[i][j-x] == 1 || matriz2[i][j+x] == 1){
-                    tudo = true;
-                }
-            }
-
-            if(tudo == true) {
-                matrizLimpa[i][j] = 1;
-            } else {
-                matrizLimpa[i][j] = 0;
-            }
-        }
-    }
+static unsigned char obter_pixel(const Imagem *imagem, size_t linha, size_t coluna) {
+    return imagem->pixels[indice_pixel(imagem, linha, coluna)];
 }
 
-//dilatação morfologica direcionada horizontal
-void dilatacaoMDH(unsigned char **matrizLimpa, unsigned char **matrizMapeada, unsigned int altura, unsigned int largura, int mY) {
-    int val = mY / 2;
-
-    for(unsigned int i = 0; i < altura; i++) {
-        for(unsigned int j = val; j < largura - val; j++) {
-            bool um = false;
-
-            for(int x = -val; x <= val; x++){
-                if(matrizLimpa[i][j+x] == 1){
-                    um = true;
-                    break;
-                }
-            }
-            
-            if(um == true) {
-                matrizMapeada[i][j] = 1;
-            } else {
-                matrizMapeada[i][j] = 0;
-            }
-        }
-    }
+static void definir_pixel(Imagem *imagem, size_t linha, size_t coluna, unsigned char valor) {
+    imagem->pixels[indice_pixel(imagem, linha, coluna)] = valor;
 }
 
-//dilatação morfologica direcionada vertical
-void dilatacaoMDV(unsigned char **matrizLimpa, unsigned char **matrizMapeada, unsigned int altura, unsigned int largura, int mX) {
-    int val = mX / 2;
-
-    // Corrigido: loop externo percorre colunas (largura) e interno percorre linhas (altura)
-    for(unsigned int j = 0; j < largura; j++) {
-        for(unsigned int i = val; i < altura - val; i++) {
-            bool um = false;
-
-            for(int x = -val; x <= val; x++){
-                if(matrizLimpa[i+x][j] == 1){
-                    um = true;
-                    break;
-                }
-            }
-            
-            if(um == true) {
-                matrizMapeada[i][j] = 1;
-            } else {
-                matrizMapeada[i][j] = 0;
-            }
-        }
-    }
+static void liberar_imagem(Imagem *imagem) {
+    free(imagem->pixels);
+    imagem->pixels = NULL;
+    imagem->largura = 0;
+    imagem->altura = 0;
 }
 
-//faz a extração de componentes conexos 
-void algoritmoRetangulos(unsigned char **matrizMapeada, unsigned int altura, unsigned int largura, Geral *listaPalavras) {
-    unsigned int capacidadeFila = altura * largura;
-    unsigned int *filaX = malloc(capacidadeFila * sizeof(unsigned int)); 
-    unsigned int *filaY = malloc(capacidadeFila * sizeof(unsigned int));
-    if (!filaX || !filaY) {
-        fprintf(stderr, "Erro: falha ao alocar fila BFS.\n");
-        free(filaX); free(filaY);
-        return;
+static bool criar_imagem(Imagem *imagem, size_t largura, size_t altura) {
+    if (largura == 0 || altura == 0 || altura > SIZE_MAX / largura) {
+        return false;
     }
 
-    for (unsigned int i = 1; i < altura - 1; i++) {
-        for (unsigned int j = 1; j < largura - 1; j++) {
-            
-            //encontra um endereço da matriz igual a 1
-            if (matrizMapeada[i][j] == 1) {
-                
-                unsigned int minX = i, maxX = i;        //registra os valores maximos e minimos
-                unsigned int minY = j, maxY = j;
-
-                int inicio = 0;
-                int fim = 0;
-
-                filaX[fim] = i; 
-                filaY[fim] = j;
-                fim++;
-                matrizMapeada[i][j] = 0; // Apaga o rastro inicial
-
-                while (inicio < fim) {
-                    unsigned int atualX = filaX[inicio];
-                    unsigned int atualY = filaY[inicio];
-                    inicio++;
-
-                    // Atualiza as coordenadas do retângulo!
-                    if (atualX < minX) minX = atualX;
-                    if (atualX > maxX) maxX = atualX;
-                    if (atualY < minY) minY = atualY;
-                    if (atualY > maxY) maxY = atualY;
-                    
-                    // Olha vizinho de CIMA
-                    if (atualX > 0 && matrizMapeada[atualX - 1][atualY] == 1 && (unsigned int)fim < capacidadeFila) {
-                        filaX[fim] = atualX - 1;
-                        filaY[fim] = atualY;
-                        fim++;
-                        matrizMapeada[atualX - 1][atualY] = 0; 
-                    }
-                    // Olha vizinho de BAIXO
-                    if (atualX + 1 < altura && matrizMapeada[atualX + 1][atualY] == 1 && (unsigned int)fim < capacidadeFila) {
-                        filaX[fim] = atualX + 1;
-                        filaY[fim] = atualY;
-                        fim++;
-                        matrizMapeada[atualX + 1][atualY] = 0; 
-                    }
-                    // Olha vizinho da ESQUERDA
-                    if (atualY > 0 && matrizMapeada[atualX][atualY - 1] == 1 && (unsigned int)fim < capacidadeFila) {
-                        filaX[fim] = atualX;
-                        filaY[fim] = atualY - 1;
-                        fim++;
-                        matrizMapeada[atualX][atualY - 1] = 0; 
-                    }
-                    // Olha vizinho da DIREITA
-                    if (atualY + 1 < largura && matrizMapeada[atualX][atualY + 1] == 1 && (unsigned int)fim < capacidadeFila) {
-                        filaX[fim] = atualX;
-                        filaY[fim] = atualY + 1;
-                        fim++;
-                        matrizMapeada[atualX][atualY + 1] = 0; 
-                    }
-                } 
-
-                if(listaPalavras->quant == listaPalavras->capacidade) {
-                    listaPalavras->capacidade *= 2;
-                    listaPalavras->palavras = realloc(listaPalavras->palavras, sizeof(Retangulo) * listaPalavras->capacidade);
-                }
-
-                listaPalavras->palavras[listaPalavras->quant].minX = minX;
-                listaPalavras->palavras[listaPalavras->quant].maxX = maxX;
-                listaPalavras->palavras[listaPalavras->quant].minY = minY;
-                listaPalavras->palavras[listaPalavras->quant].maxY = maxY;
-
-                listaPalavras->quant++;
-            }
-        }
+    size_t quantidade = largura * altura;
+    imagem->pixels = calloc(quantidade, sizeof(*imagem->pixels));
+    if (imagem->pixels == NULL) {
+        return false;
     }
 
-    free(filaX);
-    free(filaY);
+    imagem->largura = largura;
+    imagem->altura = altura;
+    return true;
 }
 
-void destacandoPalavras(unsigned char **matrizLimpa, Geral *listaPalavras){
-    unsigned int minX = 0;
-    unsigned int minY = 0;
-    unsigned int maxX = 0;
-    unsigned int maxY = 0;
-
-    for(unsigned int ind = 0; ind < listaPalavras->quant; ind++) {
-        minX = listaPalavras->palavras[ind].minX;
-        minY = listaPalavras->palavras[ind].minY;
-        maxX = listaPalavras->palavras[ind].maxX;
-        maxY = listaPalavras->palavras[ind].maxY;
-
-        for(unsigned int j = minY; j <= maxY; j++){
-            matrizLimpa[minX][j] = 1;
-            matrizLimpa[maxX][j] = 1;
-        }
-
-        for(unsigned int i = minX + 1; i < maxX; i++) {
-            matrizLimpa[i][minY] = 1;
-            matrizLimpa[i][maxY] = 1;
-        }
-    }
-}
-
-void imprimirImagem(unsigned char **matrizLimpa, FILE* arqsaida, unsigned int altura, unsigned int largura) {
-    fprintf(arqsaida, "P1\n");
-    fprintf(arqsaida, "%u %u\n", largura, altura);
-
-    // Formato PBM P1 padrão: pixels sem espaço, quebra de linha a cada 70 caracteres
-    unsigned int cont = 0;
-    for(unsigned int i = 0; i < altura; i++) {
-        for(unsigned int j = 0; j < largura; j++) {
-            fputc(matrizLimpa[i][j] ? '1' : '0', arqsaida);
-            cont++;
-            if(cont >= 70) {
-                fputc('\n', arqsaida);
-                cont = 0;
-            }
-        }
-    }
-    // Garante quebra de linha no final do arquivo
-    if(cont > 0) {
-        fputc('\n', arqsaida);
-    }
-}
-
-int main(int argc, char* argv[]) {
-    if(argc < 2) {
-        fprintf(stderr, "Uso: %s <entrada> <saida>\n", argv[0]);
-        return 1;
-    }
-    
-    //leitura do arquivo fonte passado via terminal e do arquivo que vai colocar a saída
-    FILE* arqfonte = fopen(argv[1], "r");
-    if (!arqfonte) {
-        fprintf(stderr, "Erro ao abrir arquivo de entrada.\n");
-        return 1;
-    }
-
-
-    FILE* arqsaida = fopen("saida.pbm", "w");
-    if (arqsaida == NULL) {
-        printf("Erro ao abrir o arquivo.\n");
-        return 1;
-    }
-
-    char linha[150];
-    unsigned int altura = 0;
-    unsigned int largura = 0;
-
-    // Lê o cabeçalho PBM: primeira linha é o magic number ("P1")
-    fgets(linha, sizeof(linha), arqfonte);
-    // Pula linhas de comentário (começam com '#') até chegar nas dimensões
+static void pular_comentario(FILE *arquivo) {
+    int caractere;
     do {
-        fgets(linha, sizeof(linha), arqfonte);
-    } while (linha[0] == '#');
-    // A linha atual já contém as dimensões
-    sscanf(linha, "%u %u", &largura, &altura);
+        caractere = fgetc(arquivo);
+    } while (caractere != EOF && caractere != '\n' && caractere != '\r');
+}
 
-    unsigned char **matriz = (unsigned char **)malloc(altura * sizeof(unsigned char *));            //matriz lida do arquivo
-    unsigned char **matrizErosao = (unsigned char **)malloc(altura * sizeof(unsigned char *));       //matriz depois de aplicar erosao
-    unsigned char **matrizLimpa = (unsigned char **)malloc(altura * sizeof(unsigned char *));   //matriz depois de aplicar dilatacao
-    unsigned char **matrizLimpa2 = (unsigned char **)malloc(altura * sizeof(unsigned char *));   //matriz depois de aplicar dilatacao
-    unsigned char **matrizMapeada = (unsigned char **)malloc(altura * sizeof(unsigned char *));     //matriz depois de aplicar dilatacao MD
-    unsigned char **matrizContagem = (unsigned char **)malloc(altura * sizeof(unsigned char *));    //matriz depois de aplicar a dilatacao para contagem de colunas e linhas
+/*
+ * Lê um token do cabeçalho P1. Comentários podem aparecer entre quaisquer
+ * tokens, e largura e altura não precisam estar na mesma linha.
+ */
+static int ler_token_pbm(FILE *arquivo, char *token, size_t capacidade) {
+    int caractere;
 
-    
-    // calloc inicializa tudo com 0 — bordas não ficam com lixo de memória
-    for (unsigned int i = 0; i < altura; i++) {
-        matriz[i] = (unsigned char *)calloc(largura, sizeof(unsigned char));
-        matrizErosao[i] = (unsigned char *)calloc(largura, sizeof(unsigned char));
-        matrizLimpa[i] = (unsigned char *)calloc(largura, sizeof(unsigned char));
-        matrizLimpa2[i] = (unsigned char *)calloc(largura, sizeof(unsigned char));
-        matrizMapeada[i] = (unsigned char *)calloc(largura, sizeof(unsigned char));
-        matrizContagem[i]= (unsigned char *)calloc(largura, sizeof(unsigned char));
+    if (capacidade < 2) {
+        return -1;
     }
 
-    //começa fazendo a leitura do arquivo e colocando todos os valores na matriz
-    for(unsigned int i = 0; i < altura; i++) {
-        for(unsigned int j = 0; j < largura; j++) {
-            int c;
-            // Pula espaços em branco (espaço, tabulação, quebras de linha)
-            do {
-                c = fgetc(arqfonte);
-            } while (c != EOF && (c == ' ' || c == '\n' || c == '\r' || c == '\t'));
+    for (;;) {
+        caractere = fgetc(arquivo);
+        if (caractere == EOF) {
+            return 0;
+        }
+        if (isspace((unsigned char)caractere)) {
+            continue;
+        }
+        if (caractere == '#') {
+            pular_comentario(arquivo);
+            continue;
+        }
+        break;
+    }
 
-            if (c == EOF) {
-                fprintf(stderr, "Erro: fim de arquivo prematuro ao ler pixel na posicao (%u, %u).\n", i, j);
-                // Preenche com 0 em caso de erro para evitar lixo
-                matriz[i][j] = 0;
-            } else if (c == '0') {
-                matriz[i][j] = 0;
-            } else if (c == '1') {
-                matriz[i][j] = 1;
+    size_t tamanho = 0;
+    while (caractere != EOF && !isspace((unsigned char)caractere) && caractere != '#') {
+        if (tamanho + 1 >= capacidade) {
+            return -1;
+        }
+        token[tamanho++] = (char)caractere;
+        caractere = fgetc(arquivo);
+    }
+
+    if (caractere == '#') {
+        pular_comentario(arquivo);
+    }
+    token[tamanho] = '\0';
+    return 1;
+}
+
+static bool converter_dimensao(const char *texto, size_t *valor) {
+    if (*texto == '\0') {
+        return false;
+    }
+    for (const unsigned char *caractere = (const unsigned char *)texto;
+         *caractere != '\0'; caractere++) {
+        if (!isdigit(*caractere)) {
+            return false;
+        }
+    }
+
+    char *fim = NULL;
+    errno = 0;
+    uintmax_t convertido = strtoumax(texto, &fim, 10);
+
+    if (errno != 0 || fim == texto || *fim != '\0' || convertido == 0 || convertido > SIZE_MAX) {
+        return false;
+    }
+
+    *valor = (size_t)convertido;
+    return true;
+}
+
+static int ler_bit_pbm(FILE *arquivo) {
+    for (;;) {
+        int caractere = fgetc(arquivo);
+        if (caractere == EOF) {
+            return -1;
+        }
+        if (isspace((unsigned char)caractere)) {
+            continue;
+        }
+        if (caractere == '#') {
+            pular_comentario(arquivo);
+            continue;
+        }
+        if (caractere == '0' || caractere == '1') {
+            return caractere - '0';
+        }
+        return -2;
+    }
+}
+
+static bool ler_imagem_pbm(const char *caminho, Imagem *imagem) {
+    FILE *arquivo = fopen(caminho, "r");
+    if (arquivo == NULL) {
+        fprintf(stderr, "Erro: nao foi possivel abrir '%s': %s.\n", caminho, strerror(errno));
+        return false;
+    }
+
+    bool sucesso = false;
+    char token[64];
+    size_t largura = 0;
+    size_t altura = 0;
+
+    int estado = ler_token_pbm(arquivo, token, sizeof(token));
+    if (estado != 1 || strcmp(token, "P1") != 0) {
+        fprintf(stderr, "Erro: '%s' nao e uma imagem PBM ASCII P1 valida.\n", caminho);
+        goto finalizar;
+    }
+
+    estado = ler_token_pbm(arquivo, token, sizeof(token));
+    if (estado != 1 || !converter_dimensao(token, &largura)) {
+        fprintf(stderr, "Erro: largura PBM ausente ou invalida em '%s'.\n", caminho);
+        goto finalizar;
+    }
+
+    estado = ler_token_pbm(arquivo, token, sizeof(token));
+    if (estado != 1 || !converter_dimensao(token, &altura)) {
+        fprintf(stderr, "Erro: altura PBM ausente ou invalida em '%s'.\n", caminho);
+        goto finalizar;
+    }
+
+    if (!criar_imagem(imagem, largura, altura)) {
+        fprintf(stderr, "Erro: dimensoes excessivas ou memoria insuficiente para '%s'.\n", caminho);
+        goto finalizar;
+    }
+
+    size_t quantidade = largura * altura;
+    for (size_t indice = 0; indice < quantidade; indice++) {
+        int bit = ler_bit_pbm(arquivo);
+        if (bit < 0) {
+            if (bit == -1) {
+                fprintf(stderr, "Erro: dados de pixels incompletos em '%s'.\n", caminho);
             } else {
-                // Caso apareça algum outro caractere inesperado
-                matriz[i][j] = 0;
+                fprintf(stderr, "Erro: caractere invalido nos pixels de '%s'.\n", caminho);
+            }
+            liberar_imagem(imagem);
+            goto finalizar;
+        }
+        imagem->pixels[indice] = (unsigned char)bit;
+    }
+
+    sucesso = true;
+
+finalizar:
+    if (fclose(arquivo) != 0 && sucesso) {
+        fprintf(stderr, "Erro ao fechar '%s': %s.\n", caminho, strerror(errno));
+        liberar_imagem(imagem);
+        sucesso = false;
+    }
+    return sucesso;
+}
+
+/*
+ * Filtro majoritario com vizinhanca em cruz. Ele remove impulsos pretos
+ * isolados e preenche impulsos brancos dentro dos tracos sem exigir buffers
+ * intermediarios para erosao e dilatacao.
+ */
+static bool remover_ruido_impulsivo(const Imagem *origem, Imagem *destino) {
+    if (!criar_imagem(destino, origem->largura, origem->altura)) {
+        return false;
+    }
+
+    for (size_t linha = 0; linha < origem->altura; linha++) {
+        for (size_t coluna = 0; coluna < origem->largura; coluna++) {
+            unsigned int pretos = obter_pixel(origem, linha, coluna);
+
+            if (linha > 0) {
+                pretos += obter_pixel(origem, linha - 1, coluna);
+            }
+            if (linha + 1 < origem->altura) {
+                pretos += obter_pixel(origem, linha + 1, coluna);
+            }
+            if (coluna > 0) {
+                pretos += obter_pixel(origem, linha, coluna - 1);
+            }
+            if (coluna + 1 < origem->largura) {
+                pretos += obter_pixel(origem, linha, coluna + 1);
             }
 
-            // Inicializa as bordas da matrizErosao com os pixels originais
-            if(i == 0 || i == altura - 1 || j == 0 || j == largura - 1){
-                matrizErosao[i][j] = matriz[i][j];
+            definir_pixel(destino, linha, coluna, pretos >= 3 ? 1U : 0U);
+        }
+    }
+
+    return true;
+}
+
+static void liberar_faixas(ListaFaixas *lista) {
+    free(lista->itens);
+    lista->itens = NULL;
+    lista->quantidade = 0;
+}
+
+/* Junta trechos ativos separados por, no maximo, maximo_vazio posições. */
+static bool encontrar_faixas(const unsigned char *ativo, size_t tamanho,
+                             size_t maximo_vazio, ListaFaixas *resultado) {
+    resultado->itens = NULL;
+    resultado->quantidade = 0;
+
+    if (tamanho == 0) {
+        return true;
+    }
+    if (tamanho > SIZE_MAX / sizeof(*resultado->itens)) {
+        return false;
+    }
+
+    Faixa *faixas = malloc(tamanho * sizeof(*faixas));
+    if (faixas == NULL) {
+        return false;
+    }
+
+    size_t posicao = 0;
+    while (posicao < tamanho) {
+        while (posicao < tamanho && ativo[posicao] == 0) {
+            posicao++;
+        }
+        if (posicao == tamanho) {
+            break;
+        }
+
+        size_t inicio = posicao;
+        size_t fim = posicao;
+        posicao++;
+
+        for (;;) {
+            while (posicao < tamanho && ativo[posicao] != 0) {
+                fim = posicao;
+                posicao++;
+            }
+
+            size_t inicio_vazio = posicao;
+            while (posicao < tamanho && ativo[posicao] == 0) {
+                posicao++;
+            }
+
+            if (posicao == tamanho || posicao - inicio_vazio > maximo_vazio) {
+                break;
+            }
+
+            fim = posicao;
+            posicao++;
+        }
+
+        faixas[resultado->quantidade].inicio = inicio;
+        faixas[resultado->quantidade].fim = fim;
+        resultado->quantidade++;
+    }
+
+    if (resultado->quantidade == 0) {
+        free(faixas);
+        return true;
+    }
+
+    Faixa *ajustado = realloc(faixas, resultado->quantidade * sizeof(*faixas));
+    resultado->itens = ajustado != NULL ? ajustado : faixas;
+    return true;
+}
+
+static bool adicionar_retangulo(ListaRetangulos *lista, Retangulo retangulo) {
+    if (lista->quantidade == lista->capacidade) {
+        size_t nova_capacidade = lista->capacidade == 0 ? 64 : lista->capacidade * 2;
+        if (nova_capacidade < lista->capacidade ||
+            nova_capacidade > SIZE_MAX / sizeof(*lista->itens)) {
+            return false;
+        }
+
+        Retangulo *novos = realloc(lista->itens, nova_capacidade * sizeof(*novos));
+        if (novos == NULL) {
+            return false;
+        }
+        lista->itens = novos;
+        lista->capacidade = nova_capacidade;
+    }
+
+    lista->itens[lista->quantidade++] = retangulo;
+    return true;
+}
+
+static void liberar_resultado(Resultado *resultado) {
+    free(resultado->palavras.itens);
+    resultado->palavras.itens = NULL;
+    resultado->palavras.quantidade = 0;
+    resultado->palavras.capacidade = 0;
+    resultado->colunas = 0;
+    resultado->linhas = 0;
+}
+
+static size_t somar_tinta(const Imagem *imagem, size_t topo, size_t base,
+                          size_t esquerda, size_t direita) {
+    size_t total = 0;
+    for (size_t linha = topo; linha <= base; linha++) {
+        for (size_t coluna = esquerda; coluna <= direita; coluna++) {
+            total += obter_pixel(imagem, linha, coluna);
+        }
+    }
+    return total;
+}
+
+static int comparar_tamanhos(const void *primeiro, const void *segundo) {
+    size_t a = *(const size_t *)primeiro;
+    size_t b = *(const size_t *)segundo;
+    return (a > b) - (a < b);
+}
+
+static bool estimar_altura_texto(const Imagem *imagem, size_t *altura_estimada) {
+    unsigned char *ativo = calloc(imagem->altura, sizeof(*ativo));
+    if (ativo == NULL) {
+        return false;
+    }
+
+    for (size_t linha = 0; linha < imagem->altura; linha++) {
+        size_t tinta = 0;
+        for (size_t coluna = 0; coluna < imagem->largura; coluna++) {
+            tinta += obter_pixel(imagem, linha, coluna);
+        }
+        ativo[linha] = tinta >= 2 ? 1U : 0U;
+    }
+
+    ListaFaixas faixas = {0};
+    bool sucesso = encontrar_faixas(ativo, imagem->altura, 2, &faixas);
+    free(ativo);
+    if (!sucesso) {
+        return false;
+    }
+
+    if (faixas.quantidade == 0) {
+        *altura_estimada = 12;
+        return true;
+    }
+
+    size_t *alturas = malloc(faixas.quantidade * sizeof(*alturas));
+    if (alturas == NULL) {
+        liberar_faixas(&faixas);
+        return false;
+    }
+
+    size_t quantidade = 0;
+    for (size_t i = 0; i < faixas.quantidade; i++) {
+        size_t altura = faixas.itens[i].fim - faixas.itens[i].inicio + 1;
+        if (altura >= 3) {
+            alturas[quantidade++] = altura;
+        }
+    }
+    liberar_faixas(&faixas);
+
+    if (quantidade == 0) {
+        *altura_estimada = 12;
+    } else {
+        qsort(alturas, quantidade, sizeof(*alturas), comparar_tamanhos);
+        *altura_estimada = alturas[quantidade / 2];
+        if (*altura_estimada < 12) {
+            *altura_estimada = 12;
+        }
+    }
+
+    free(alturas);
+    return true;
+}
+
+static bool localizar_colunas(const Imagem *imagem, ListaFaixas *colunas) {
+    size_t altura_texto = 0;
+    if (!estimar_altura_texto(imagem, &altura_texto)) {
+        return false;
+    }
+
+    size_t *projecao = calloc(imagem->largura, sizeof(*projecao));
+    unsigned char *ativo = calloc(imagem->largura, sizeof(*ativo));
+    if (projecao == NULL || ativo == NULL) {
+        free(projecao);
+        free(ativo);
+        return false;
+    }
+
+    for (size_t linha = 0; linha < imagem->altura; linha++) {
+        for (size_t coluna = 0; coluna < imagem->largura; coluna++) {
+            projecao[coluna] += obter_pixel(imagem, linha, coluna);
+        }
+    }
+
+    size_t minimo_tinta = imagem->altura / 1000;
+    if (minimo_tinta < 2) {
+        minimo_tinta = 2;
+    }
+    for (size_t coluna = 0; coluna < imagem->largura; coluna++) {
+        ativo[coluna] = projecao[coluna] >= minimo_tinta ? 1U : 0U;
+    }
+
+    size_t uniao_interna = imagem->largura / 300;
+    if (uniao_interna < altura_texto) {
+        uniao_interna = altura_texto;
+    }
+
+    ListaFaixas candidatas = {0};
+    bool sucesso = encontrar_faixas(ativo, imagem->largura, uniao_interna, &candidatas);
+    free(projecao);
+    free(ativo);
+    if (!sucesso) {
+        return false;
+    }
+
+    if (candidatas.quantidade == 0) {
+        *colunas = candidatas;
+        return true;
+    }
+
+    Faixa *validas = malloc(candidatas.quantidade * sizeof(*validas));
+    if (validas == NULL) {
+        liberar_faixas(&candidatas);
+        return false;
+    }
+
+    size_t quantidade = 0;
+    for (size_t i = 0; i < candidatas.quantidade; i++) {
+        Faixa faixa = candidatas.itens[i];
+        size_t tinta = somar_tinta(imagem, 0, imagem->altura - 1, faixa.inicio, faixa.fim);
+        size_t largura = faixa.fim - faixa.inicio + 1;
+
+        if (tinta >= 8 && largura >= 2) {
+            validas[quantidade++] = faixa;
+        }
+    }
+    liberar_faixas(&candidatas);
+
+    if (quantidade == 0) {
+        free(validas);
+        colunas->itens = NULL;
+        colunas->quantidade = 0;
+        return true;
+    }
+
+    Faixa *ajustado = realloc(validas, quantidade * sizeof(*validas));
+    colunas->itens = ajustado != NULL ? ajustado : validas;
+    colunas->quantidade = quantidade;
+    return true;
+}
+
+static bool localizar_linhas(const Imagem *imagem, Faixa coluna, ListaFaixas *linhas) {
+    size_t *projecao = calloc(imagem->altura, sizeof(*projecao));
+    unsigned char *ativo = calloc(imagem->altura, sizeof(*ativo));
+    if (projecao == NULL || ativo == NULL) {
+        free(projecao);
+        free(ativo);
+        return false;
+    }
+
+    for (size_t linha = 0; linha < imagem->altura; linha++) {
+        for (size_t x = coluna.inicio; x <= coluna.fim; x++) {
+            projecao[linha] += obter_pixel(imagem, linha, x);
+        }
+        ativo[linha] = projecao[linha] >= 2 ? 1U : 0U;
+    }
+
+    ListaFaixas candidatas = {0};
+    bool sucesso = encontrar_faixas(ativo, imagem->altura, 2, &candidatas);
+    free(ativo);
+    if (!sucesso) {
+        free(projecao);
+        return false;
+    }
+
+    if (candidatas.quantidade == 0) {
+        free(projecao);
+        *linhas = candidatas;
+        return true;
+    }
+
+    Faixa *validas = malloc(candidatas.quantidade * sizeof(*validas));
+    if (validas == NULL) {
+        free(projecao);
+        liberar_faixas(&candidatas);
+        return false;
+    }
+
+    size_t quantidade = 0;
+    for (size_t i = 0; i < candidatas.quantidade; i++) {
+        Faixa faixa = candidatas.itens[i];
+        size_t altura = faixa.fim - faixa.inicio + 1;
+        size_t tinta = 0;
+        for (size_t y = faixa.inicio; y <= faixa.fim; y++) {
+            tinta += projecao[y];
+        }
+
+        if (altura >= 3 && tinta >= 8) {
+            validas[quantidade++] = faixa;
+        }
+    }
+
+    free(projecao);
+    liberar_faixas(&candidatas);
+
+    if (quantidade == 0) {
+        free(validas);
+        linhas->itens = NULL;
+        linhas->quantidade = 0;
+        return true;
+    }
+
+    Faixa *ajustado = realloc(validas, quantidade * sizeof(*validas));
+    linhas->itens = ajustado != NULL ? ajustado : validas;
+    linhas->quantidade = quantidade;
+    return true;
+}
+
+static bool caixa_da_palavra(const Imagem *imagem, Faixa linha, Faixa palavra,
+                             Retangulo *retangulo) {
+    size_t topo = imagem->altura;
+    size_t base = 0;
+    size_t esquerda = imagem->largura;
+    size_t direita = 0;
+    bool encontrou = false;
+
+    for (size_t y = linha.inicio; y <= linha.fim; y++) {
+        for (size_t x = palavra.inicio; x <= palavra.fim; x++) {
+            if (obter_pixel(imagem, y, x) == 0) {
+                continue;
+            }
+            encontrou = true;
+            if (y < topo) {
+                topo = y;
+            }
+            if (y > base) {
+                base = y;
+            }
+            if (x < esquerda) {
+                esquerda = x;
+            }
+            if (x > direita) {
+                direita = x;
             }
         }
     }
 
-    //pré-processamento - remoção de ruídos (abertura morfológica: erosão + dilatação com mesma máscara)
-    erosao(matriz, matrizErosao, altura, largura);
-    dilatacao(matrizErosao, matrizLimpa, altura, largura, 3);
-
-    // Copia as bordas da imagem original para matrizLimpa
-    // (erosão e dilatação ignoram a borda 1px; preservamos o valor original para não perder informação)
-    for (unsigned int j = 0; j < largura; j++) {
-        matrizLimpa[0][j] = matriz[0][j];
-        matrizLimpa[altura-1][j] = matriz[altura-1][j];
-    }
-    for (unsigned int i = 0; i < altura; i++) {
-        matrizLimpa[i][0] = matriz[i][0];
-        matrizLimpa[i][largura-1] = matriz[i][largura-1];
+    if (!encontrou) {
+        return false;
     }
 
-    //copia da matriz limpa para mais alterações
-    for(unsigned int i = 0; i < altura; i++) {
-        //matrizLimpa2[i] = malloc(largura * sizeof(unsigned char));
-        for(unsigned int j = 0; j < largura; j++) {
-            // Copia o pixel exato da Limpa para a Cópia
-            matrizLimpa2[i][j] = matrizLimpa[i][j];
+    retangulo->topo = topo > 0 ? topo - 1 : topo;
+    retangulo->base = base + 1 < imagem->altura ? base + 1 : base;
+    retangulo->esquerda = esquerda > 0 ? esquerda - 1 : esquerda;
+    retangulo->direita = direita + 1 < imagem->largura ? direita + 1 : direita;
+    return true;
+}
+
+static bool localizar_palavras_na_linha(const Imagem *imagem, Faixa coluna,
+                                        Faixa linha, ListaRetangulos *palavras) {
+    size_t largura_coluna = coluna.fim - coluna.inicio + 1;
+    size_t altura_linha = linha.fim - linha.inicio + 1;
+    size_t minimo_tinta_vertical = altura_linha < 18 ? 1 : 2;
+    unsigned char *ativo = calloc(largura_coluna, sizeof(*ativo));
+    if (ativo == NULL) {
+        return false;
+    }
+
+    for (size_t deslocamento = 0; deslocamento < largura_coluna; deslocamento++) {
+        size_t x = coluna.inicio + deslocamento;
+        size_t tinta_vertical = 0;
+        for (size_t y = linha.inicio; y <= linha.fim; y++) {
+            tinta_vertical += obter_pixel(imagem, y, x);
+        }
+        /* Um unico pixel residual nao deve criar uma ponte entre palavras. */
+        ativo[deslocamento] = tinta_vertical >= minimo_tinta_vertical ? 1U : 0U;
+    }
+
+    size_t lacuna_palavra = (altura_linha + 3) / 4;
+    if (lacuna_palavra < 4) {
+        lacuna_palavra = 4;
+    }
+
+    ListaFaixas grupos = {0};
+    bool sucesso = encontrar_faixas(ativo, largura_coluna, lacuna_palavra - 1, &grupos);
+    free(ativo);
+    if (!sucesso) {
+        return false;
+    }
+
+    for (size_t i = 0; i < grupos.quantidade; i++) {
+        Faixa palavra = {
+            .inicio = coluna.inicio + grupos.itens[i].inicio,
+            .fim = coluna.inicio + grupos.itens[i].fim,
+        };
+        Retangulo retangulo;
+        if (caixa_da_palavra(imagem, linha, palavra, &retangulo) &&
+            somar_tinta(imagem, linha.inicio, linha.fim, palavra.inicio, palavra.fim) >= 3 &&
+            !adicionar_retangulo(palavras, retangulo)) {
+            liberar_faixas(&grupos);
+            return false;
         }
     }
 
-    int tamMascara = (int)(largura * 0.005);
-    //garante que o valor da mascara não seja menor que 5 - já que a altura minima é 12
-    if(tamMascara < 5) {
-        tamMascara = 5;
+    liberar_faixas(&grupos);
+    return true;
+}
+
+static bool analisar_imagem(const Imagem *imagem, Resultado *resultado) {
+    memset(resultado, 0, sizeof(*resultado));
+
+    ListaFaixas colunas = {0};
+    if (!localizar_colunas(imagem, &colunas)) {
+        return false;
     }
-    //garante que a mascara seja impar
-    if(tamMascara % 2 == 0) {
-        tamMascara++;
+
+    resultado->colunas = colunas.quantidade;
+    for (size_t indice_coluna = 0; indice_coluna < colunas.quantidade; indice_coluna++) {
+        ListaFaixas linhas = {0};
+        if (!localizar_linhas(imagem, colunas.itens[indice_coluna], &linhas)) {
+            liberar_faixas(&colunas);
+            liberar_resultado(resultado);
+            return false;
+        }
+
+        resultado->linhas += linhas.quantidade;
+        for (size_t indice_linha = 0; indice_linha < linhas.quantidade; indice_linha++) {
+            if (!localizar_palavras_na_linha(imagem, colunas.itens[indice_coluna],
+                                             linhas.itens[indice_linha],
+                                             &resultado->palavras)) {
+                liberar_faixas(&linhas);
+                liberar_faixas(&colunas);
+                liberar_resultado(resultado);
+                return false;
+            }
+        }
+        liberar_faixas(&linhas);
     }
-    //mapeamento das palavras - transformamos as palavras em blocos sólidos
-    dilatacaoMDH(matrizLimpa, matrizMapeada, altura, largura, tamMascara);
 
-    //estrutura para armazenar as informações do número de palavras
-    Geral *listaPalavras = malloc(sizeof(Geral));
-    listaPalavras->capacidade = 64;
-    listaPalavras->palavras = malloc(sizeof(Retangulo) * listaPalavras->capacidade);
-    listaPalavras->quant = 0;
+    liberar_faixas(&colunas);
+    return true;
+}
 
-    //utiliza o algoritmo flood fill adaptado para poder percorrer a matriz e identificar o número de palavras
-    algoritmoRetangulos(matrizMapeada, altura, largura, listaPalavras);
+static void desenhar_retangulos(Imagem *imagem, const ListaRetangulos *retangulos) {
+    for (size_t indice = 0; indice < retangulos->quantidade; indice++) {
+        Retangulo retangulo = retangulos->itens[indice];
 
-    // Máscara horizontal de linhas: usa LARGURA (não altura) e garante que seja ímpar
-    int tamanhoL = (int)(largura * 0.20);
-    if(tamanhoL < 5) tamanhoL = 5;
-    if(tamanhoL % 2 == 0) tamanhoL++;
-    Geral *ContagemLinhas = malloc(sizeof(Geral));
-    ContagemLinhas->capacidade = 64;
-    ContagemLinhas->quant = 0;
-    ContagemLinhas->palavras = malloc(sizeof(Retangulo) * ContagemLinhas->capacidade);
-    dilatacaoMDH(matrizLimpa, matrizContagem, altura, largura, tamanhoL);
-    algoritmoRetangulos(matrizContagem, altura, largura, ContagemLinhas);
+        for (size_t x = retangulo.esquerda; x <= retangulo.direita; x++) {
+            definir_pixel(imagem, retangulo.topo, x, 1);
+            definir_pixel(imagem, retangulo.base, x, 1);
+        }
+        for (size_t y = retangulo.topo; y <= retangulo.base; y++) {
+            definir_pixel(imagem, y, retangulo.esquerda, 1);
+            definir_pixel(imagem, y, retangulo.direita, 1);
+        }
+    }
+}
 
-    //limpando a matrizContagem para poder reutilizar ela na contagem de colunas
-    for (unsigned int i = 0; i < altura; i++) {
-        for (unsigned int j = 0; j < largura; j++) {
-            matrizContagem[i][j] = 0;
+static bool escrever_imagem_pbm(const char *caminho, const Imagem *imagem) {
+    FILE *arquivo = fopen(caminho, "w");
+    if (arquivo == NULL) {
+        fprintf(stderr, "Erro: nao foi possivel criar '%s': %s.\n", caminho, strerror(errno));
+        return false;
+    }
+
+    bool sucesso = fprintf(arquivo, "P1\n%zu %zu\n", imagem->largura, imagem->altura) >= 0;
+    size_t caracteres_na_linha = 0;
+
+    for (size_t linha = 0; sucesso && linha < imagem->altura; linha++) {
+        for (size_t coluna = 0; coluna < imagem->largura; coluna++) {
+            if (caracteres_na_linha == 70) {
+                sucesso = fputc('\n', arquivo) != EOF;
+                caracteres_na_linha = 0;
+                if (!sucesso) {
+                    break;
+                }
+            }
+            sucesso = fputc(obter_pixel(imagem, linha, coluna) != 0 ? '1' : '0', arquivo) != EOF;
+            caracteres_na_linha++;
+            if (!sucesso) {
+                break;
+            }
         }
     }
 
-    // Máscara vertical de colunas: usa ALTURA e garante que seja ímpar
-    int tamanhoC = (int)(altura * 0.20);
-    if(tamanhoC < 5) tamanhoC = 5;
-    if(tamanhoC % 2 == 0) tamanhoC++;
-    Geral *ContagemColunas = malloc(sizeof(Geral));
-    ContagemColunas->capacidade = 64;
-    ContagemColunas->quant = 0;
-    ContagemColunas->palavras = malloc(sizeof(Retangulo) * ContagemColunas->capacidade);
-    dilatacaoMDV(matrizLimpa, matrizContagem, altura, largura, tamanhoC);
-    algoritmoRetangulos(matrizContagem, altura, largura, ContagemColunas);
-
-    printf("\n\nTotal de palavras encontradas: %d", listaPalavras->quant);
-    printf("\nTotal de linhas encontradas: %d", ContagemLinhas->quant);
-    printf("\nTotal de colunas encontradas: %d", ContagemColunas->quant);
-    printf("\n\n");
-
-    destacandoPalavras(matrizLimpa, listaPalavras);
-    imprimirImagem(matrizLimpa, arqsaida, altura, largura);
-
-    for(unsigned int i = 0; i < altura; i++) {
-        free(matriz[i]);
-        free(matrizErosao[i]);
-        free(matrizLimpa[i]);
-        free(matrizLimpa2[i]);
-        free(matrizMapeada[i]);
-        free(matrizContagem[i]);
+    if (sucesso && caracteres_na_linha != 0) {
+        sucesso = fputc('\n', arquivo) != EOF;
     }
-    free(matriz);
-    free(matrizErosao);
-    free(matrizLimpa);
-    free(matrizLimpa2);
-    free(matrizMapeada);
-    free(matrizContagem);
-    free(listaPalavras->palavras);
-    free(ContagemColunas->palavras);
-    free(ContagemLinhas->palavras);
-    free(listaPalavras);
-    free(ContagemColunas);
-    free(ContagemLinhas);
-    fclose(arqfonte);
-    fclose(arqsaida);
-    return 0;
+    if (fclose(arquivo) != 0) {
+        sucesso = false;
+    }
+
+    if (!sucesso) {
+        fprintf(stderr, "Erro ao escrever a imagem PBM em '%s'.\n", caminho);
+    }
+    return sucesso;
+}
+
+static void imprimir_uso(const char *programa) {
+    fprintf(stderr, "Uso: %s <entrada.pbm> [saida.pbm]\n", programa);
+}
+
+int main(int argc, char *argv[]) {
+    if (argc < 2 || argc > 3) {
+        imprimir_uso(argv[0]);
+        return EXIT_FAILURE;
+    }
+
+    const char *caminho_saida = argc == 3 ? argv[2] : "saida.pbm";
+    Imagem original = {0};
+    Imagem limpa = {0};
+    Resultado resultado = {0};
+    int codigo = EXIT_FAILURE;
+
+    if (!ler_imagem_pbm(argv[1], &original)) {
+        goto finalizar;
+    }
+    if (!remover_ruido_impulsivo(&original, &limpa)) {
+        fprintf(stderr, "Erro: memoria insuficiente durante a remocao de ruido.\n");
+        goto finalizar;
+    }
+    if (!analisar_imagem(&limpa, &resultado)) {
+        fprintf(stderr, "Erro: memoria insuficiente durante a segmentacao.\n");
+        goto finalizar;
+    }
+
+    printf("Total de palavras encontradas: %zu\n", resultado.palavras.quantidade);
+    printf("Total de linhas encontradas: %zu\n", resultado.linhas);
+    printf("Total de colunas encontradas: %zu\n", resultado.colunas);
+
+    desenhar_retangulos(&limpa, &resultado.palavras);
+    if (!escrever_imagem_pbm(caminho_saida, &limpa)) {
+        goto finalizar;
+    }
+
+    codigo = EXIT_SUCCESS;
+
+finalizar:
+    liberar_resultado(&resultado);
+    liberar_imagem(&limpa);
+    liberar_imagem(&original);
+    return codigo;
 }
