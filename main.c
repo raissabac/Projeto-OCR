@@ -18,12 +18,6 @@ typedef struct {
     unsigned int capacidade;
 } Geral;
 
-/*
-    0 1 0
-    1 1 1
-    0 1 0
-
-*/
 
 void erosao(unsigned char **matriz, unsigned char **matrizErosao, unsigned int altura, unsigned int largura){
     for (unsigned int i = 1; i < altura-1; i++) {
@@ -45,16 +39,22 @@ void erosao(unsigned char **matriz, unsigned char **matrizErosao, unsigned int a
 }
 
 //fazer a dilatacao, adição dos campos int mX e int mY para poder utilizar a função com qualquer mascara
-void dilatacao(unsigned char **matriz2, unsigned char **matrizLimpa, unsigned int altura, unsigned int largura) {
+void dilatacao(unsigned char **matriz2, unsigned char **matrizLimpa, unsigned int altura, unsigned int largura, int m) {
+    int val = m/2;
+
     for (unsigned int i = 1; i < altura-1; i++) {
         for(unsigned int j = 1; j < largura-1; j++){
 
             bool tudo = false;
 
-            if(matriz2[i-1][j] == 1 || matriz2[i+1][j] == 1 || matriz2[i][j-1] == 1 || matriz2[i][j] == 1 || matriz2[i][j+1] == 1){
-                tudo = true;
+            for(int x = val; x <= 0; x--) {
+                if(x == 0 && matriz2[i][j] == 1) {
+                    tudo = true;
+                }
+                else if(matriz2[i-x][j] == 1 || matriz2[i+x][j] == 1 || matriz2[i][j-x] == 1 || matriz2[i][j+x] == 1){
+                    tudo = true;
+                }
             }
-
 
             if(tudo == true) {
                 matrizLimpa[i][j] = 1;
@@ -249,21 +249,22 @@ void imprimirImagem(unsigned char **matrizLimpa, FILE* arqsaida, unsigned int al
 }
 
 int main(int argc, char* argv[]) {
-   /* if(argc < 3) {
+    if(argc < 2) {
         fprintf(stderr, "Uso: %s <entrada> <saida>\n", argv[0]);
         return 1;
-    }*/
+    }
     
     //leitura do arquivo fonte passado via terminal e do arquivo que vai colocar a saída
     FILE* arqfonte = fopen(argv[1], "r");
-    FILE* arqsaida = fopen(argv[2], "w");
     if (!arqfonte) {
         fprintf(stderr, "Erro ao abrir arquivo de entrada.\n");
         return 1;
     }
-    if (!arqsaida) {
-        fprintf(stderr, "Erro ao abrir arquivo de saida.\n");
-        fclose(arqfonte);
+
+
+    FILE* arqsaida = fopen("saida.pbm", "w");
+    if (arqsaida == NULL) {
+        printf("Erro ao abrir o arquivo.\n");
         return 1;
     }
 
@@ -283,15 +284,17 @@ int main(int argc, char* argv[]) {
     unsigned char **matriz = (unsigned char **)malloc(altura * sizeof(unsigned char *));            //matriz lida do arquivo
     unsigned char **matrizErosao = (unsigned char **)malloc(altura * sizeof(unsigned char *));       //matriz depois de aplicar erosao
     unsigned char **matrizLimpa = (unsigned char **)malloc(altura * sizeof(unsigned char *));   //matriz depois de aplicar dilatacao
+    unsigned char **matrizLimpa2 = (unsigned char **)malloc(altura * sizeof(unsigned char *));   //matriz depois de aplicar dilatacao
     unsigned char **matrizMapeada = (unsigned char **)malloc(altura * sizeof(unsigned char *));     //matriz depois de aplicar dilatacao MD
     unsigned char **matrizContagem = (unsigned char **)malloc(altura * sizeof(unsigned char *));    //matriz depois de aplicar a dilatacao para contagem de colunas e linhas
 
     
     // calloc inicializa tudo com 0 — bordas não ficam com lixo de memória
     for (unsigned int i = 0; i < altura; i++) {
-        matriz[i]        = (unsigned char *)calloc(largura, sizeof(unsigned char));
-        matrizErosao[i]  = (unsigned char *)calloc(largura, sizeof(unsigned char));
-        matrizLimpa[i]   = (unsigned char *)calloc(largura, sizeof(unsigned char));
+        matriz[i] = (unsigned char *)calloc(largura, sizeof(unsigned char));
+        matrizErosao[i] = (unsigned char *)calloc(largura, sizeof(unsigned char));
+        matrizLimpa[i] = (unsigned char *)calloc(largura, sizeof(unsigned char));
+        matrizLimpa2[i] = (unsigned char *)calloc(largura, sizeof(unsigned char));
         matrizMapeada[i] = (unsigned char *)calloc(largura, sizeof(unsigned char));
         matrizContagem[i]= (unsigned char *)calloc(largura, sizeof(unsigned char));
     }
@@ -325,35 +328,28 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // === DEBUG: salva a matriz original (sem nenhum processamento) ===
-    FILE* debugOriginal = fopen("debug_original.pbm", "w");
-    if (debugOriginal) {
-        imprimirImagem(matriz, debugOriginal, altura, largura);
-        fclose(debugOriginal);
-        printf("[DEBUG] Arquivo debug_original.pbm salvo (imagem lida sem processamento)\n");
-    }
-
     //pré-processamento - remoção de ruídos (abertura morfológica: erosão + dilatação com mesma máscara)
     erosao(matriz, matrizErosao, altura, largura);
-    dilatacao(matrizErosao, matrizLimpa, altura, largura);
+    dilatacao(matrizErosao, matrizLimpa, altura, largura, 3);
 
     // Copia as bordas da imagem original para matrizLimpa
     // (erosão e dilatação ignoram a borda 1px; preservamos o valor original para não perder informação)
     for (unsigned int j = 0; j < largura; j++) {
-        matrizLimpa[0][j]          = matriz[0][j];
-        matrizLimpa[altura-1][j]   = matriz[altura-1][j];
+        matrizLimpa[0][j] = matriz[0][j];
+        matrizLimpa[altura-1][j] = matriz[altura-1][j];
     }
     for (unsigned int i = 0; i < altura; i++) {
-        matrizLimpa[i][0]          = matriz[i][0];
-        matrizLimpa[i][largura-1]  = matriz[i][largura-1];
+        matrizLimpa[i][0] = matriz[i][0];
+        matrizLimpa[i][largura-1] = matriz[i][largura-1];
     }
 
-    // === DEBUG: salva a matrizLimpa (após erosão + dilatação + bordas) ===
-    FILE* debugLimpa = fopen("debug_limpa.pbm", "w");
-    if (debugLimpa) {
-        imprimirImagem(matrizLimpa, debugLimpa, altura, largura);
-        fclose(debugLimpa);
-        printf("[DEBUG] Arquivo debug_limpa.pbm salvo (após erosão + dilatação)\n");
+    //copia da matriz limpa para mais alterações
+    for(unsigned int i = 0; i < altura; i++) {
+        //matrizLimpa2[i] = malloc(largura * sizeof(unsigned char));
+        for(unsigned int j = 0; j < largura; j++) {
+            // Copia o pixel exato da Limpa para a Cópia
+            matrizLimpa2[i][j] = matrizLimpa[i][j];
+        }
     }
 
     int tamMascara = (int)(largura * 0.005);
