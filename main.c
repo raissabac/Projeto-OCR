@@ -18,21 +18,21 @@ typedef struct {
     unsigned int capacidade;
 } Geral;
 
+/*
+    0 1 0
+    1 1 1
+    0 1 0
+
+*/
+
 void erosao(unsigned char **matriz, unsigned char **matrizErosao, unsigned int altura, unsigned int largura){
     for (unsigned int i = 1; i < altura-1; i++) {
         for(unsigned int j = 1; j < largura-1; j++){
 
             bool tudo = true;
 
-            for(int x = -1; x < 2; x++) {
-                for(int y = -1; y < 2; y++) {
-                    if(matriz[i + x][j + y] == 0) {
-                        tudo = false;
-                        break;
-                    }
-                }
-                if(tudo == false)
-                    break;
+            if(matriz[i-1][j] == 0 || matriz[i+1][j] == 0 || matriz[i][j-1] == 0 || matriz[i][j] == 0 || matriz[i][j+1] == 0){
+                tudo = false;
             }
 
             if(tudo == true) {
@@ -45,22 +45,16 @@ void erosao(unsigned char **matriz, unsigned char **matrizErosao, unsigned int a
 }
 
 //fazer a dilatacao, adição dos campos int mX e int mY para poder utilizar a função com qualquer mascara
-void dilatacao(unsigned char **matriz2, unsigned char **matrizLimpa, unsigned int altura, unsigned int largura, int mX, int mY) {
+void dilatacao(unsigned char **matriz2, unsigned char **matrizLimpa, unsigned int altura, unsigned int largura) {
     for (unsigned int i = 1; i < altura-1; i++) {
         for(unsigned int j = 1; j < largura-1; j++){
 
             bool tudo = false;
 
-            for(int x = -(mX/2); x < (mX/2) + 1; x++) {
-                for(int y = -(mY/2); y < (mY/2) + 1; y++) {
-                    if(matriz2[i + x][j + y] == 1) {
-                        tudo = true;
-                        break;
-                    }
-                }
-                if(tudo == true)
-                    break;
+            if(matriz2[i-1][j] == 1 || matriz2[i+1][j] == 1 || matriz2[i][j-1] == 1 || matriz2[i][j] == 1 || matriz2[i][j+1] == 1){
+                tudo = true;
             }
+
 
             if(tudo == true) {
                 matrizLimpa[i][j] = 1;
@@ -76,7 +70,7 @@ void dilatacaoMDH(unsigned char **matrizLimpa, unsigned char **matrizMapeada, un
     int val = mY / 2;
 
     for(unsigned int i = 0; i < altura; i++) {
-        for(unsigned int j = 2; j < largura - 3; j++) {
+        for(unsigned int j = val; j < largura - val; j++) {
             bool um = false;
 
             for(int x = -val; x < (mY - 1 - val); x++){
@@ -99,12 +93,13 @@ void dilatacaoMDH(unsigned char **matrizLimpa, unsigned char **matrizMapeada, un
 void dilatacaoMDV(unsigned char **matrizLimpa, unsigned char **matrizMapeada, unsigned int altura, unsigned int largura, int mX) {
     int val = mX / 2;
 
-    for(unsigned int i = 0; i < altura; i++) {
-        for(unsigned int j = 2; j < largura - 3; j++) {
+    // Corrigido: loop externo percorre colunas (largura) e interno percorre linhas (altura)
+    for(unsigned int j = 0; j < largura; j++) {
+        for(unsigned int i = val; i < altura - val; i++) {
             bool um = false;
 
             for(int x = -val; x < (mX - 1 - val); x++){
-                if(matrizLimpa[i][j+x] == 0){
+                if(matrizLimpa[i+x][j] == 1){
                     um = true;
                     break;
                 }
@@ -121,9 +116,14 @@ void dilatacaoMDV(unsigned char **matrizLimpa, unsigned char **matrizMapeada, un
 
 //faz a extração de componentes conexos 
 void algoritmoRetangulos(unsigned char **matrizMapeada, unsigned int altura, unsigned int largura, Geral *listaPalavras) {
-    // Fila estática declarada fora para não pesar a memória recriando toda hora
-    unsigned int *filaX = malloc(altura * largura * sizeof(unsigned int)); 
-    unsigned int *filaY = malloc(altura * largura * sizeof(unsigned int));
+    unsigned int capacidadeFila = altura * largura;
+    unsigned int *filaX = malloc(capacidadeFila * sizeof(unsigned int)); 
+    unsigned int *filaY = malloc(capacidadeFila * sizeof(unsigned int));
+    if (!filaX || !filaY) {
+        fprintf(stderr, "Erro: falha ao alocar fila BFS.\n");
+        free(filaX); free(filaY);
+        return;
+    }
 
     for (unsigned int i = 1; i < altura - 1; i++) {
         for (unsigned int j = 1; j < largura - 1; j++) {
@@ -154,28 +154,28 @@ void algoritmoRetangulos(unsigned char **matrizMapeada, unsigned int altura, uns
                     if (atualY > maxY) maxY = atualY;
                     
                     // Olha vizinho de CIMA
-                    if (matrizMapeada[atualX - 1][atualY] == 1) {
+                    if (atualX > 0 && matrizMapeada[atualX - 1][atualY] == 1 && (unsigned int)fim < capacidadeFila) {
                         filaX[fim] = atualX - 1;
                         filaY[fim] = atualY;
                         fim++;
                         matrizMapeada[atualX - 1][atualY] = 0; 
                     }
                     // Olha vizinho de BAIXO
-                    if (matrizMapeada[atualX + 1][atualY] == 1) {
+                    if (atualX + 1 < altura && matrizMapeada[atualX + 1][atualY] == 1 && (unsigned int)fim < capacidadeFila) {
                         filaX[fim] = atualX + 1;
                         filaY[fim] = atualY;
                         fim++;
                         matrizMapeada[atualX + 1][atualY] = 0; 
                     }
                     // Olha vizinho da ESQUERDA
-                    if (matrizMapeada[atualX][atualY - 1] == 1) {
+                    if (atualY > 0 && matrizMapeada[atualX][atualY - 1] == 1 && (unsigned int)fim < capacidadeFila) {
                         filaX[fim] = atualX;
                         filaY[fim] = atualY - 1;
                         fim++;
                         matrizMapeada[atualX][atualY - 1] = 0; 
                     }
                     // Olha vizinho da DIREITA
-                    if (matrizMapeada[atualX][atualY + 1] == 1) {
+                    if (atualY + 1 < largura && matrizMapeada[atualX][atualY + 1] == 1 && (unsigned int)fim < capacidadeFila) {
                         filaX[fim] = atualX;
                         filaY[fim] = atualY + 1;
                         fim++;
@@ -230,19 +230,29 @@ void imprimirImagem(unsigned char **matrizLimpa, FILE* arqsaida, unsigned int al
     fprintf(arqsaida, "P1\n");
     fprintf(arqsaida, "%u %u\n", largura, altura);
 
+    // Formato PBM P1 padrão: pixels sem espaço, quebra de linha a cada 70 caracteres
+    unsigned int cont = 0;
     for(unsigned int i = 0; i < altura; i++) {
         for(unsigned int j = 0; j < largura; j++) {
-            fprintf(arqsaida, "%d ", matrizLimpa[i][j]);
+            fputc(matrizLimpa[i][j] ? '1' : '0', arqsaida);
+            cont++;
+            if(cont >= 70) {
+                fputc('\n', arqsaida);
+                cont = 0;
+            }
         }
-        fprintf(arqsaida, "\n");
+    }
+    // Garante quebra de linha no final do arquivo
+    if(cont > 0) {
+        fputc('\n', arqsaida);
     }
 }
 
 int main(int argc, char* argv[]) {
-    if(argc < 3) {
+   /* if(argc < 3) {
         fprintf(stderr, "Uso: %s <entrada> <saida>\n", argv[0]);
         return 1;
-    }
+    }*/
     
     //leitura do arquivo fonte passado via terminal e do arquivo que vai colocar a saída
     FILE* arqfonte = fopen(argv[1], "r");
@@ -261,9 +271,14 @@ int main(int argc, char* argv[]) {
     unsigned int altura = 0;
     unsigned int largura = 0;
 
+    // Lê o cabeçalho PBM: primeira linha é o magic number ("P1")
     fgets(linha, sizeof(linha), arqfonte);
-    fgets(linha, sizeof(linha), arqfonte);
-    fscanf(arqfonte, "%u %u", &largura, &altura);
+    // Pula linhas de comentário (começam com '#') até chegar nas dimensões
+    do {
+        fgets(linha, sizeof(linha), arqfonte);
+    } while (linha[0] == '#');
+    // A linha atual já contém as dimensões
+    sscanf(linha, "%u %u", &largura, &altura);
 
     unsigned char **matriz = (unsigned char **)malloc(altura * sizeof(unsigned char *));            //matriz lida do arquivo
     unsigned char **matrizErosao = (unsigned char **)malloc(altura * sizeof(unsigned char *));       //matriz depois de aplicar erosao
@@ -272,29 +287,74 @@ int main(int argc, char* argv[]) {
     unsigned char **matrizContagem = (unsigned char **)malloc(altura * sizeof(unsigned char *));    //matriz depois de aplicar a dilatacao para contagem de colunas e linhas
 
     
+    // calloc inicializa tudo com 0 — bordas não ficam com lixo de memória
     for (unsigned int i = 0; i < altura; i++) {
-        matriz[i] = (unsigned char *)malloc(largura * sizeof(unsigned char));
-        matrizErosao[i] = (unsigned char *)malloc(largura * sizeof(unsigned char*));
-        matrizLimpa[i] = (unsigned char *)malloc(largura * sizeof(unsigned char*));
-        matrizMapeada[i] = (unsigned char *)malloc(largura * sizeof(unsigned char*));
-        matrizContagem[i] = (unsigned char *)malloc(largura * sizeof(unsigned char*));
+        matriz[i]        = (unsigned char *)calloc(largura, sizeof(unsigned char));
+        matrizErosao[i]  = (unsigned char *)calloc(largura, sizeof(unsigned char));
+        matrizLimpa[i]   = (unsigned char *)calloc(largura, sizeof(unsigned char));
+        matrizMapeada[i] = (unsigned char *)calloc(largura, sizeof(unsigned char));
+        matrizContagem[i]= (unsigned char *)calloc(largura, sizeof(unsigned char));
     }
 
-    //começa fazendo a leitura do arquivo e colocando todos os valores na matriz e na matriz limpa (que vai conservar as bordas)
-    unsigned int a; 
+    //começa fazendo a leitura do arquivo e colocando todos os valores na matriz
     for(unsigned int i = 0; i < altura; i++) {
         for(unsigned int j = 0; j < largura; j++) {
-            fscanf(arqfonte, "%u", &a); 
-            matriz[i][j] = (unsigned char)a; // Faz o cast e salva na matriz
+            int c;
+            // Pula espaços em branco (espaço, tabulação, quebras de linha)
+            do {
+                c = fgetc(arqfonte);
+            } while (c != EOF && (c == ' ' || c == '\n' || c == '\r' || c == '\t'));
+
+            if (c == EOF) {
+                fprintf(stderr, "Erro: fim de arquivo prematuro ao ler pixel na posicao (%u, %u).\n", i, j);
+                // Preenche com 0 em caso de erro para evitar lixo
+                matriz[i][j] = 0;
+            } else if (c == '0') {
+                matriz[i][j] = 0;
+            } else if (c == '1') {
+                matriz[i][j] = 1;
+            } else {
+                // Caso apareça algum outro caractere inesperado
+                matriz[i][j] = 0;
+            }
+
+            // Inicializa as bordas da matrizErosao com os pixels originais
             if(i == 0 || i == altura - 1 || j == 0 || j == largura - 1){
-                matrizErosao[i][j] = (unsigned char)a;
+                matrizErosao[i][j] = matriz[i][j];
             }
         }
     }
 
-    //pré-processamento - remoção de ruídos
+    // === DEBUG: salva a matriz original (sem nenhum processamento) ===
+    FILE* debugOriginal = fopen("debug_original.pbm", "w");
+    if (debugOriginal) {
+        imprimirImagem(matriz, debugOriginal, altura, largura);
+        fclose(debugOriginal);
+        printf("[DEBUG] Arquivo debug_original.pbm salvo (imagem lida sem processamento)\n");
+    }
+
+    //pré-processamento - remoção de ruídos (abertura morfológica: erosão + dilatação com mesma máscara)
     erosao(matriz, matrizErosao, altura, largura);
-    dilatacao(matrizErosao, matrizLimpa, altura, largura, 3, 3);
+    dilatacao(matrizErosao, matrizLimpa, altura, largura);
+
+    // Copia as bordas da imagem original para matrizLimpa
+    // (erosão e dilatação ignoram a borda 1px; preservamos o valor original para não perder informação)
+    for (unsigned int j = 0; j < largura; j++) {
+        matrizLimpa[0][j]          = matriz[0][j];
+        matrizLimpa[altura-1][j]   = matriz[altura-1][j];
+    }
+    for (unsigned int i = 0; i < altura; i++) {
+        matrizLimpa[i][0]          = matriz[i][0];
+        matrizLimpa[i][largura-1]  = matriz[i][largura-1];
+    }
+
+    // === DEBUG: salva a matrizLimpa (após erosão + dilatação + bordas) ===
+    FILE* debugLimpa = fopen("debug_limpa.pbm", "w");
+    if (debugLimpa) {
+        imprimirImagem(matrizLimpa, debugLimpa, altura, largura);
+        fclose(debugLimpa);
+        printf("[DEBUG] Arquivo debug_limpa.pbm salvo (após erosão + dilatação)\n");
+    }
 
     int tamMascara = (int)(largura * 0.005);
     //garante que o valor da mascara não seja menor que 5 - já que a altura minima é 12
@@ -317,8 +377,10 @@ int main(int argc, char* argv[]) {
     //utiliza o algoritmo flood fill adaptado para poder percorrer a matriz e identificar o número de palavras
     algoritmoRetangulos(matrizMapeada, altura, largura, listaPalavras);
 
-    //vamos utilizar o tamanho da mascara no calculo da linhas como 20% do valor da altura da imagem 
-    int tamanhoL = altura * 0.20;
+    // Máscara horizontal de linhas: usa LARGURA (não altura) e garante que seja ímpar
+    int tamanhoL = (int)(largura * 0.20);
+    if(tamanhoL < 5) tamanhoL = 5;
+    if(tamanhoL % 2 == 0) tamanhoL++;
     Geral *ContagemLinhas = malloc(sizeof(Geral));
     ContagemLinhas->capacidade = 64;
     ContagemLinhas->quant = 0;
@@ -333,8 +395,10 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    //vamos utilizar o tamanho da mascara no calculo das colunas como 20% do valor da largura da imagem 
-    int tamanhoC = largura * 0.20;       
+    // Máscara vertical de colunas: usa ALTURA e garante que seja ímpar
+    int tamanhoC = (int)(altura * 0.20);
+    if(tamanhoC < 5) tamanhoC = 5;
+    if(tamanhoC % 2 == 0) tamanhoC++;
     Geral *ContagemColunas = malloc(sizeof(Geral));
     ContagemColunas->capacidade = 64;
     ContagemColunas->quant = 0;
