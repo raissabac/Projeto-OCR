@@ -10,7 +10,7 @@ retângulo.
 Em Linux, usando GCC:
 
 ```sh
-gcc -std=c11 -O2 -Wall -Wextra -Wpedantic main.c -o ocr
+gcc -std=c11 -O2 -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wformat=2 -Wformat-signedness main.c -o ocr
 ```
 
 ## Execução
@@ -44,5 +44,3 @@ Total de colunas encontradas: 2
 
 O programa aceita comentários em qualquer parte válida do PBM P1 e encerra
 com erro quando encontra formato, dimensões ou pixels inválidos.
-
-Uma descrição das técnicas e dos parâmetros está em [RELATORIO.md](RELATORIO.md).

@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+// Mantém o raster em um vetor contíguo, organizado linha a linha.
 typedef struct {
     size_t largura;
     size_t altura;
@@ -67,6 +68,7 @@ static void liberar_imagem(Imagem *imagem) {
 }
 
 static bool criar_imagem(Imagem *imagem, size_t largura, size_t altura) {
+    // Verifica o produto antes da alocação para evitar overflow de size_t.
     if (largura == 0 || altura == 0 || altura > SIZE_MAX / largura) {
         return false;
     }
@@ -89,10 +91,7 @@ static void pular_comentario(FILE *arquivo) {
     } while (caractere != EOF && caractere != '\n' && caractere != '\r');
 }
 
-/*
- * Lê um token do cabeçalho P1. Comentários podem aparecer entre quaisquer
- * tokens, e largura e altura não precisam estar na mesma linha.
- */
+// Lê um token do cabeçalho P1, ignorando espaços e comentários do arquivo.
 static int ler_token_pbm(FILE *arquivo, char *token, size_t capacidade) {
     int caractere;
 
@@ -186,6 +185,7 @@ static bool ler_imagem_pbm(const char *caminho, Imagem *imagem) {
     size_t largura = 0;
     size_t altura = 0;
 
+    // Valida o identificador e as dimensões antes de reservar o raster.
     int estado = ler_token_pbm(arquivo, token, sizeof(token));
     if (estado != 1 || strcmp(token, "P1") != 0) {
         fprintf(stderr, "Erro: '%s' nao e uma imagem PBM ASCII P1 valida.\n", caminho);
@@ -210,6 +210,7 @@ static bool ler_imagem_pbm(const char *caminho, Imagem *imagem) {
     }
 
     size_t quantidade = largura * altura;
+    // No PBM P1, espaços, quebras de linha e comentários podem separar os bits.
     for (size_t indice = 0; indice < quantidade; indice++) {
         int bit = ler_bit_pbm(arquivo);
         if (bit < 0) {
@@ -235,16 +236,13 @@ finalizar:
     return sucesso;
 }
 
-/*
- * Filtro majoritario com vizinhanca em cruz. Ele remove impulsos pretos
- * isolados e preenche impulsos brancos dentro dos tracos sem exigir buffers
- * intermediarios para erosao e dilatacao.
- */
+// Aplica um filtro majoritário em cruz para reduzir ruído impulsivo.
 static bool remover_ruido_impulsivo(const Imagem *origem, Imagem *destino) {
     if (!criar_imagem(destino, origem->largura, origem->altura)) {
         return false;
     }
 
+    // A saída separada impede que um pixel filtrado altere os cálculos seguintes.
     for (size_t linha = 0; linha < origem->altura; linha++) {
         for (size_t coluna = 0; coluna < origem->largura; coluna++) {
             unsigned int pretos = obter_pixel(origem, linha, coluna);
@@ -269,10 +267,7 @@ static bool remover_ruido_impulsivo(const Imagem *origem, Imagem *destino) {
     return true;
 }
 
-/*
- * Dilatação em forma de losango, equivalente a repetir uma máscara em cruz.
- * A origem permanece intacta para que a espessura seja controlada exatamente.
- */
+// Dilata a imagem com uma máscara em losango sem modificar a origem.
 static bool aplicar_negrito(const Imagem *origem, Imagem *destino, size_t espessura) {
     if (espessura == 0 || !criar_imagem(destino, origem->largura, origem->altura)) {
         return false;
@@ -290,6 +285,7 @@ static bool aplicar_negrito(const Imagem *origem, Imagem *destino, size_t espess
                               ? origem->altura - 1
                               : linha + espessura;
 
+            // O alcance horizontal diminui com a distância vertical, formando o losango.
             for (size_t y = topo; y <= base; y++) {
                 size_t distancia_vertical = y > linha ? y - linha : linha - y;
                 size_t alcance_horizontal = espessura - distancia_vertical;
@@ -316,7 +312,7 @@ static void liberar_faixas(ListaFaixas *lista) {
     lista->quantidade = 0;
 }
 
-/* Junta trechos ativos separados por, no maximo, maximo_vazio posições. */
+// Junta trechos ativos separados por, no máximo, maximo_vazio posições.
 static bool encontrar_faixas(const unsigned char *ativo, size_t tamanho,
                              size_t maximo_vazio, ListaFaixas *resultado) {
     resultado->itens = NULL;
@@ -358,6 +354,7 @@ static bool encontrar_faixas(const unsigned char *ativo, size_t tamanho,
                 posicao++;
             }
 
+            // Uma lacuna maior que a tolerância encerra a faixa atual.
             if (posicao == tamanho || posicao - inicio_vazio > maximo_vazio) {
                 break;
             }
@@ -383,6 +380,7 @@ static bool encontrar_faixas(const unsigned char *ativo, size_t tamanho,
 
 static bool adicionar_retangulo(ListaRetangulos *lista, Retangulo retangulo) {
     if (lista->quantidade == lista->capacidade) {
+        // O crescimento geométrico reduz a quantidade de realocações da lista.
         size_t nova_capacidade = lista->capacidade == 0 ? 64 : lista->capacidade * 2;
         if (nova_capacidade < lista->capacidade ||
             nova_capacidade > SIZE_MAX / sizeof(*lista->itens)) {
@@ -471,6 +469,7 @@ static bool estimar_altura_texto(const Imagem *imagem, size_t *altura_estimada) 
     if (quantidade == 0) {
         *altura_estimada = 12;
     } else {
+        // A mediana reduz a influência de faixas excepcionalmente altas ou baixas.
         qsort(alturas, quantidade, sizeof(*alturas), comparar_tamanhos);
         *altura_estimada = alturas[quantidade / 2];
         if (*altura_estimada < 12) {
@@ -496,6 +495,7 @@ static bool localizar_colunas(const Imagem *imagem, ListaFaixas *colunas) {
         return false;
     }
 
+    // A projeção vertical acumula a tinta de cada coluna da página.
     for (size_t linha = 0; linha < imagem->altura; linha++) {
         for (size_t coluna = 0; coluna < imagem->largura; coluna++) {
             projecao[coluna] += obter_pixel(imagem, linha, coluna);
@@ -515,6 +515,7 @@ static bool localizar_colunas(const Imagem *imagem, ListaFaixas *colunas) {
         uniao_interna = altura_texto;
     }
 
+    // A tolerância une partes próximas da mesma coluna sem alterar a imagem.
     ListaFaixas candidatas = {0};
     bool sucesso = encontrar_faixas(ativo, imagem->largura, uniao_interna, &candidatas);
     free(projecao);
@@ -568,6 +569,7 @@ static bool localizar_linhas(const Imagem *imagem, Faixa coluna, ListaFaixas *li
         return false;
     }
 
+    // A projeção horizontal é calculada apenas dentro da coluna atual.
     for (size_t linha = 0; linha < imagem->altura; linha++) {
         for (size_t x = coluna.inicio; x <= coluna.fim; x++) {
             projecao[linha] += obter_pixel(imagem, linha, x);
@@ -634,6 +636,7 @@ static bool caixa_da_palavra(const Imagem *imagem, Faixa linha, Faixa palavra,
     size_t direita = 0;
     bool encontrou = false;
 
+    // Ajusta a faixa aproximada aos limites dos pixels realmente pretos.
     for (size_t y = linha.inicio; y <= linha.fim; y++) {
         for (size_t x = palavra.inicio; x <= palavra.fim; x++) {
             if (obter_pixel(imagem, y, x) == 0) {
@@ -682,10 +685,11 @@ static bool localizar_palavras_na_linha(const Imagem *imagem, Faixa coluna,
         for (size_t y = linha.inicio; y <= linha.fim; y++) {
             tinta_vertical += obter_pixel(imagem, y, x);
         }
-        /* Um unico pixel residual nao deve criar uma ponte entre palavras. */
+        // Em linhas altas, um único pixel residual não deve unir duas palavras.
         ativo[deslocamento] = tinta_vertical >= minimo_tinta_vertical ? 1U : 0U;
     }
 
+    // A separação mínima cresce com a altura estimada da linha de texto.
     size_t lacuna_palavra = (altura_linha + 3) / 4;
     if (lacuna_palavra < 4) {
         lacuna_palavra = 4;
@@ -719,6 +723,7 @@ static bool localizar_palavras_na_linha(const Imagem *imagem, Faixa coluna,
 static bool analisar_imagem(const Imagem *imagem, Resultado *resultado) {
     memset(resultado, 0, sizeof(*resultado));
 
+    // Segmenta hierarquicamente a página em colunas, linhas e palavras.
     ListaFaixas colunas = {0};
     if (!localizar_colunas(imagem, &colunas)) {
         return false;
@@ -755,6 +760,7 @@ static void desenhar_retangulos(Imagem *imagem, const ListaRetangulos *retangulo
                                 size_t margem) {
     for (size_t indice = 0; indice < retangulos->quantidade; indice++) {
         Retangulo original = retangulos->itens[indice];
+        // Expande a caixa solicitada e recorta suas coordenadas nas bordas.
         Retangulo retangulo = {
             .topo = original.topo > margem ? original.topo - margem : 0,
             .base = imagem->altura - 1 - original.base < margem
@@ -787,6 +793,7 @@ static bool escrever_imagem_pbm(const char *caminho, const Imagem *imagem) {
     bool sucesso = fprintf(arquivo, "P1\n%zu %zu\n", imagem->largura, imagem->altura) >= 0;
     size_t caracteres_na_linha = 0;
 
+    // Limita as linhas textuais sem alterar a ordem dos pixels do raster.
     for (size_t linha = 0; sucesso && linha < imagem->altura; linha++) {
         for (size_t coluna = 0; coluna < imagem->largura; coluna++) {
             if (caracteres_na_linha == 70) {
@@ -834,6 +841,7 @@ static bool ler_opcoes(int argc, char *argv[], Opcoes *opcoes) {
     for (int indice = 1; indice < argc; indice++) {
         const char *argumento = argv[indice];
 
+        // Após "--", argumentos iniciados por hífen também são tratados como caminhos.
         if (!fim_das_opcoes && strcmp(argumento, "--") == 0) {
             fim_das_opcoes = true;
             continue;
@@ -913,6 +921,7 @@ int main(int argc, char *argv[]) {
     }
     liberar_imagem(&original);
 
+    // A segmentação usa a imagem limpa e ocorre antes de qualquer dilatação.
     if (!analisar_imagem(&limpa, &resultado)) {
         fprintf(stderr, "Erro: memoria insuficiente durante a segmentacao.\n");
         goto finalizar;
@@ -924,6 +933,7 @@ int main(int argc, char *argv[]) {
 
     Imagem *imagem_saida = &limpa;
     if (opcoes.espessura_negrito > 0) {
+        // O negrito afeta somente a representação visual de saída.
         if (!aplicar_negrito(&limpa, &negrito, opcoes.espessura_negrito)) {
             fprintf(stderr, "Erro: memoria insuficiente ao aplicar o negrito.\n");
             goto finalizar;
