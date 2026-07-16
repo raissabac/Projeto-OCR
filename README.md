@@ -16,7 +16,7 @@ gcc -std=c11 -O2 -Wall -Wextra -Wpedantic main.c -o ocr
 ## Execução
 
 ```sh
-./ocr entrada.pbm [saida.pbm]
+./ocr [--negrito[=1..3]] entrada.pbm [saida.pbm]
 ```
 
 O caminho de saída é opcional. Quando ele não é informado, o programa cria
@@ -26,7 +26,13 @@ Exemplo:
 
 ```sh
 ./ocr Teste/lorem_s12_c02.pbm resultado.pbm
+./ocr --negrito Teste/lorem_s12_c02.pbm resultado_negrito.pbm
+./ocr --negrito=2 Teste/lorem_s12_c02.pbm resultado_negrito_2.pbm
 ```
+
+`--negrito` (ou `-b`) engrossa o texto em um pixel. A forma
+`--negrito=N` permite escolher uma espessura entre 1 e 3. O efeito é aplicado
+somente depois das contagens, portanto não altera os resultados da segmentação.
 
 A contagem é exibida no terminal:
 
