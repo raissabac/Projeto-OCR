@@ -41,6 +41,12 @@ typedef struct {
     ListaRetangulos palavras;
 } Resultado;
 
+typedef struct {
+    const char *entrada;
+    const char *saida;
+    size_t espessura_negrito;
+} Opcoes;
+
 static size_t indice_pixel(const Imagem *imagem, size_t linha, size_t coluna) {
     return linha * imagem->largura + coluna;
 }
@@ -257,6 +263,47 @@ static bool remover_ruido_impulsivo(const Imagem *origem, Imagem *destino) {
             }
 
             definir_pixel(destino, linha, coluna, pretos >= 3 ? 1U : 0U);
+        }
+    }
+
+    return true;
+}
+
+/*
+ * Dilatação em forma de losango, equivalente a repetir uma máscara em cruz.
+ * A origem permanece intacta para que a espessura seja controlada exatamente.
+ */
+static bool aplicar_negrito(const Imagem *origem, Imagem *destino, size_t espessura) {
+    if (espessura == 0 || !criar_imagem(destino, origem->largura, origem->altura)) {
+        return false;
+    }
+
+    for (size_t linha = 0; linha < origem->altura; linha++) {
+        for (size_t coluna = 0; coluna < origem->largura; coluna++) {
+            if (obter_pixel(origem, linha, coluna) == 0) {
+                continue;
+            }
+
+            size_t topo = linha > espessura ? linha - espessura : 0;
+            size_t espaco_abaixo = origem->altura - 1 - linha;
+            size_t base = espaco_abaixo < espessura
+                              ? origem->altura - 1
+                              : linha + espessura;
+
+            for (size_t y = topo; y <= base; y++) {
+                size_t distancia_vertical = y > linha ? y - linha : linha - y;
+                size_t alcance_horizontal = espessura - distancia_vertical;
+                size_t esquerda = coluna > alcance_horizontal
+                                      ? coluna - alcance_horizontal
+                                      : 0;
+                size_t espaco_direita = origem->largura - 1 - coluna;
+                size_t direita = espaco_direita < alcance_horizontal
+                                     ? origem->largura - 1
+                                     : coluna + alcance_horizontal;
+
+                memset(&destino->pixels[indice_pixel(destino, y, esquerda)], 1,
+                       direita - esquerda + 1);
+            }
         }
     }
 
@@ -612,10 +659,10 @@ static bool caixa_da_palavra(const Imagem *imagem, Faixa linha, Faixa palavra,
         return false;
     }
 
-    retangulo->topo = topo > 0 ? topo - 1 : topo;
-    retangulo->base = base + 1 < imagem->altura ? base + 1 : base;
-    retangulo->esquerda = esquerda > 0 ? esquerda - 1 : esquerda;
-    retangulo->direita = direita + 1 < imagem->largura ? direita + 1 : direita;
+    retangulo->topo = topo;
+    retangulo->base = base;
+    retangulo->esquerda = esquerda;
+    retangulo->direita = direita;
     return true;
 }
 
@@ -704,9 +751,20 @@ static bool analisar_imagem(const Imagem *imagem, Resultado *resultado) {
     return true;
 }
 
-static void desenhar_retangulos(Imagem *imagem, const ListaRetangulos *retangulos) {
+static void desenhar_retangulos(Imagem *imagem, const ListaRetangulos *retangulos,
+                                size_t margem) {
     for (size_t indice = 0; indice < retangulos->quantidade; indice++) {
-        Retangulo retangulo = retangulos->itens[indice];
+        Retangulo original = retangulos->itens[indice];
+        Retangulo retangulo = {
+            .topo = original.topo > margem ? original.topo - margem : 0,
+            .base = imagem->altura - 1 - original.base < margem
+                        ? imagem->altura - 1
+                        : original.base + margem,
+            .esquerda = original.esquerda > margem ? original.esquerda - margem : 0,
+            .direita = imagem->largura - 1 - original.direita < margem
+                           ? imagem->largura - 1
+                           : original.direita + margem,
+        };
 
         for (size_t x = retangulo.esquerda; x <= retangulo.direita; x++) {
             definir_pixel(imagem, retangulo.topo, x, 1);
@@ -760,28 +818,101 @@ static bool escrever_imagem_pbm(const char *caminho, const Imagem *imagem) {
 }
 
 static void imprimir_uso(const char *programa) {
-    fprintf(stderr, "Uso: %s <entrada.pbm> [saida.pbm]\n", programa);
+    fprintf(stderr,
+            "Uso: %s [--negrito[=1..3]] <entrada.pbm> [saida.pbm]\n",
+            programa);
+}
+
+static bool ler_opcoes(int argc, char *argv[], Opcoes *opcoes) {
+    memset(opcoes, 0, sizeof(*opcoes));
+    opcoes->saida = "saida.pbm";
+
+    bool fim_das_opcoes = false;
+    bool negrito_definido = false;
+    size_t quantidade_caminhos = 0;
+
+    for (int indice = 1; indice < argc; indice++) {
+        const char *argumento = argv[indice];
+
+        if (!fim_das_opcoes && strcmp(argumento, "--") == 0) {
+            fim_das_opcoes = true;
+            continue;
+        }
+
+        bool opcao_negrito = !fim_das_opcoes &&
+                              (strcmp(argumento, "--negrito") == 0 ||
+                               strcmp(argumento, "-b") == 0);
+        bool opcao_negrito_com_valor = !fim_das_opcoes &&
+                                        strncmp(argumento, "--negrito=", 10) == 0;
+
+        if (opcao_negrito || opcao_negrito_com_valor) {
+            if (negrito_definido) {
+                fprintf(stderr, "Erro: a opcao de negrito foi informada mais de uma vez.\n");
+                return false;
+            }
+
+            size_t espessura = 1;
+            if (opcao_negrito_com_valor &&
+                !converter_dimensao(argumento + 10, &espessura)) {
+                fprintf(stderr, "Erro: espessura de negrito invalida.\n");
+                return false;
+            }
+            if (espessura > 3) {
+                fprintf(stderr, "Erro: a espessura do negrito deve estar entre 1 e 3.\n");
+                return false;
+            }
+
+            opcoes->espessura_negrito = espessura;
+            negrito_definido = true;
+            continue;
+        }
+
+        if (!fim_das_opcoes && argumento[0] == '-' && argumento[1] != '\0') {
+            fprintf(stderr, "Erro: opcao desconhecida '%s'.\n", argumento);
+            return false;
+        }
+
+        if (quantidade_caminhos == 0) {
+            opcoes->entrada = argumento;
+        } else if (quantidade_caminhos == 1) {
+            opcoes->saida = argumento;
+        } else {
+            fprintf(stderr, "Erro: foram informados caminhos em excesso.\n");
+            return false;
+        }
+        quantidade_caminhos++;
+    }
+
+    if (opcoes->entrada == NULL) {
+        fprintf(stderr, "Erro: informe uma imagem PBM de entrada.\n");
+        return false;
+    }
+
+    return true;
 }
 
 int main(int argc, char *argv[]) {
-    if (argc < 2 || argc > 3) {
+    Opcoes opcoes;
+    if (!ler_opcoes(argc, argv, &opcoes)) {
         imprimir_uso(argv[0]);
         return EXIT_FAILURE;
     }
 
-    const char *caminho_saida = argc == 3 ? argv[2] : "saida.pbm";
     Imagem original = {0};
     Imagem limpa = {0};
+    Imagem negrito = {0};
     Resultado resultado = {0};
     int codigo = EXIT_FAILURE;
 
-    if (!ler_imagem_pbm(argv[1], &original)) {
+    if (!ler_imagem_pbm(opcoes.entrada, &original)) {
         goto finalizar;
     }
     if (!remover_ruido_impulsivo(&original, &limpa)) {
         fprintf(stderr, "Erro: memoria insuficiente durante a remocao de ruido.\n");
         goto finalizar;
     }
+    liberar_imagem(&original);
+
     if (!analisar_imagem(&limpa, &resultado)) {
         fprintf(stderr, "Erro: memoria insuficiente durante a segmentacao.\n");
         goto finalizar;
@@ -791,8 +922,18 @@ int main(int argc, char *argv[]) {
     printf("Total de linhas encontradas: %zu\n", resultado.linhas);
     printf("Total de colunas encontradas: %zu\n", resultado.colunas);
 
-    desenhar_retangulos(&limpa, &resultado.palavras);
-    if (!escrever_imagem_pbm(caminho_saida, &limpa)) {
+    Imagem *imagem_saida = &limpa;
+    if (opcoes.espessura_negrito > 0) {
+        if (!aplicar_negrito(&limpa, &negrito, opcoes.espessura_negrito)) {
+            fprintf(stderr, "Erro: memoria insuficiente ao aplicar o negrito.\n");
+            goto finalizar;
+        }
+        imagem_saida = &negrito;
+    }
+
+    desenhar_retangulos(imagem_saida, &resultado.palavras,
+                        opcoes.espessura_negrito + 1);
+    if (!escrever_imagem_pbm(opcoes.saida, imagem_saida)) {
         goto finalizar;
     }
 
@@ -800,6 +941,7 @@ int main(int argc, char *argv[]) {
 
 finalizar:
     liberar_resultado(&resultado);
+    liberar_imagem(&negrito);
     liberar_imagem(&limpa);
     liberar_imagem(&original);
     return codigo;
